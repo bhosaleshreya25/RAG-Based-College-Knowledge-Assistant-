@@ -1,0 +1,81 @@
+import { useEffect, useMemo, useState } from "react";
+import { Activity, AlertCircle, CheckCircle2, Clock3, Database, FileText, FileUp, LogOut, LockKeyhole, RefreshCw, Search, ShieldCheck, Trash2, UploadCloud, X, LayoutDashboard, Menu, Eye, EyeOff } from "lucide-react";
+import { fetchDocuments, fetchHealth, fetchReadiness, uploadDocument, deleteDocument, retryDocument } from "./services/api";
+import type { DocumentItem, HealthStatus, ReadinessStatus } from "./types/api";
+const size=(n:number)=>n<1024*1024?`${(n/1024).toFixed(0)} KB`:`${(n/1024/1024).toFixed(2)} MB`;
+const date=(v:string)=>new Date(v).toLocaleDateString(undefined,{day:"2-digit",month:"short",year:"numeric"});
+const statusClass=(s:string)=>s==="completed"?"success":s==="failed"?"danger":s==="processing"||s==="queued"?"warning":"neutral";
+const ADMIN_SESSION_KEY = "mitaoe_admin_secret";
+
+function App(){
+ const [secret,setSecret]=useState<string>(()=>{
+  try {
+   return localStorage.getItem(ADMIN_SESSION_KEY)||sessionStorage.getItem(ADMIN_SESSION_KEY)||"";
+  } catch {
+   return "";
+  }
+ });
+ const [secretInput,setSecretInput]=useState(""); const [showSecret,setShowSecret]=useState(false);
+ const [health,setHealth]=useState<HealthStatus|null>(null); const [readiness,setReadiness]=useState<ReadinessStatus|null>(null); const [docs,setDocs]=useState<DocumentItem[]>([]);
+ const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [notice,setNotice]=useState("");
+ const [search,setSearch]=useState(""); const [filter,setFilter]=useState("all"); const [file,setFile]=useState<File|null>(null);
+ const [uploading,setUploading]=useState(false); const [active,setActive]=useState("Dashboard"); const [mobile,setMobile]=useState(false);
+ const [confirm,setConfirm]=useState<DocumentItem|null>(null); const [retryTarget,setRetryTarget]=useState<DocumentItem|null>(null);
+
+ const load=async(s=secret)=>{
+  if(!s) return;
+  setLoading(true);setError("");
+  try{
+   const [h,d]=await Promise.all([fetchHealth(),fetchDocuments(s,0,100)]);
+   setHealth(h);setDocs(d.items);
+   fetchReadiness().then(setReadiness).catch(()=>setReadiness(null));
+  }catch(e){
+   if(e instanceof Error&&(e.message.includes("401")||e.message.includes("Unauthorized"))){
+    try{localStorage.removeItem(ADMIN_SESSION_KEY);sessionStorage.removeItem(ADMIN_SESSION_KEY);}catch{}
+    setSecret("");
+   }
+   setError(e instanceof Error?e.message:"Unable to load admin data");
+  }finally{setLoading(false);}
+ };
+
+ useEffect(()=>{
+  if(secret){
+   void load(secret);
+  }
+ },[]);
+
+ const login=async(e:import("react").FormEvent)=>{
+  e.preventDefault();
+  const val=secretInput.trim();
+  if(!val)return;
+  try{localStorage.setItem(ADMIN_SESSION_KEY,val);}catch{}
+  setSecret(val);
+  await load(val);
+ };
+
+ const handleLogout=()=>{
+  try{localStorage.removeItem(ADMIN_SESSION_KEY);sessionStorage.removeItem(ADMIN_SESSION_KEY);}catch{}
+  setSecret("");setSecretInput("");setDocs([]);
+ };
+ useEffect(()=>{if(secret){const t=setInterval(()=>{fetchDocuments(secret,0,100).then(d=>setDocs(d.items)).catch(()=>{});},10000);return()=>clearInterval(t);}},[secret]);
+ const counts=useMemo(()=>({total:docs.length,done:docs.filter(d=>d.status==="completed").length,processing:docs.filter(d=>["processing","queued"].includes(d.status)).length,failed:docs.filter(d=>d.status==="failed").length}),[docs]);
+ const visible=docs.filter(d=>(filter==="all"||d.status===filter)&&d.original_filename.toLowerCase().includes(search.toLowerCase()));
+ const doUpload=async()=>{if(!file)return;if(file.size>50*1024*1024){setError("File exceeds the 50 MB upload limit.");return;}if(!/\.(pdf|docx)$/i.test(file.name)){setError("Please select a PDF or DOCX file.");return;}setUploading(true);setError("");setNotice("");try{const r=await uploadDocument(secret,file);setNotice(r.message);setFile(null);const el=document.getElementById("document-file") as HTMLInputElement|null;if(el)el.value="";await load();}catch(e){setError(e instanceof Error?e.message:"Upload failed");}finally{setUploading(false);}};
+ const doDelete=async()=>{if(!confirm)return;try{const r=await deleteDocument(secret,confirm.id);setNotice(r.message);setConfirm(null);await load();}catch(e){setError(e instanceof Error?e.message:"Delete failed");}};
+ const doRetry=async(f:File)=>{if(!retryTarget)return;try{const r=await retryDocument(secret,retryTarget.id,f);setNotice(r.message);setRetryTarget(null);await load();}catch(e){setError(e instanceof Error?e.message:"Retry failed");}};
+ if(!secret)return <div className="login-page"><div className="login-brand"><div className="login-mark"><Database size={27}/></div><div><b>MIT Academy of Engineering</b><span>Knowledge Assistant · Administration</span></div></div><div className="login-card"><div className="login-icon"><LockKeyhole size={25}/></div><div className="eyebrow">RESTRICTED ACCESS</div><h1>Administrator sign in</h1><p>Sign in with your authorized administrative API secret to manage the college knowledge base.</p><form onSubmit={login}><label>Admin API Secret</label><div className="secret-field"><input type={showSecret?"text":"password"} value={secretInput} onChange={e=>setSecretInput(e.target.value)} placeholder="Enter your admin secret" required/><button type="button" onClick={()=>setShowSecret(!showSecret)}>{showSecret?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>{error&&<div className="error-line"><AlertCircle size={15}/>{error}</div>}<button className="primary-btn login-submit" disabled={loading}>{loading?"Verifying…":"Sign in securely"}</button></form><div className="security-message"><ShieldCheck size={17}/><span>Credentials are held only in this browser session and are not stored in the application bundle. Use HTTPS in production.</span></div></div><p className="login-footer">MIT Academy of Engineering · Authorized personnel only</p></div>;
+ return <div className="admin-shell">
+ {mobile&&<button className="admin-scrim" onClick={()=>setMobile(false)}/>}
+ <aside className={`admin-sidebar ${mobile?"show":""}`}><div className="admin-brand"><div className="admin-logo">MIT</div><div><b>Academy of Engineering</b><span>Administration Portal</span></div><button className="close-side" onClick={()=>setMobile(false)}><X size={18}/></button></div><div className="admin-nav-label">MANAGEMENT</div><button className={`nav-item ${active==="Dashboard"?"selected":""}`} onClick={()=>{setActive("Dashboard");setMobile(false)}}><LayoutDashboard size={17}/> Dashboard</button><button className={`nav-item ${active==="Documents"?"selected":""}`} onClick={()=>{setActive("Documents");setMobile(false)}}><FileText size={17}/> Documents</button><button className={`nav-item ${active==="Upload Document"?"selected":""}`} onClick={()=>{setActive("Upload Document");setMobile(false)}}><UploadCloud size={17}/> Upload document</button><div className="admin-nav-label second">SYSTEM</div><button className={`nav-item ${active==="System health"?"selected":""}`} onClick={()=>{setActive("System health");setMobile(false);fetchReadiness().then(setReadiness).catch(e=>setError(e instanceof Error?e.message:"Health check failed"));}}><Activity size={17}/> System health</button><div className="admin-sidebar-bottom"><div className="admin-secure"><ShieldCheck size={16}/><span>Secure administrative session</span></div><button className="logout-btn" onClick={handleLogout}><LogOut size={17}/> Sign out</button></div></aside>
+ <main className="admin-main"><header className="admin-topbar"><button className="admin-menu" onClick={()=>setMobile(true)}><Menu size={20}/></button><div><h2>{active}</h2><p>College Knowledge Assistant · Document operations</p></div><div className="health-pill"><span className={`status-dot ${health?"online":""}`}/>{health?"Backend connected":"Checking service"}</div></header>
+ <div className="admin-content">{error&&<div className="alert error"><AlertCircle size={17}/>{error}<button onClick={()=>setError("")}><X size={15}/></button></div>}{notice&&<div className="alert success-alert"><CheckCircle2 size={17}/>{notice}<button onClick={()=>setNotice("")}><X size={15}/></button></div>}
+ {active==="System health"?<section className="panel upload-panel"><div className="section-heading"><h3>Service readiness</h3><p>Live dependency readiness reported by the FastAPI backend.</p></div><div className="health-detail"><span className={`status-dot ${readiness?.status==="ready"?"online":""}`}/><div><b>{readiness?.status==="ready"?"Backend dependencies ready":readiness?.status==="degraded"?"Backend is degraded":"Readiness information unavailable"}</b><small>{health?.project_name||"College Knowledge Assistant"} · API {health?.version||"—"}</small></div><button className="refresh-btn" onClick={()=>fetchReadiness().then(setReadiness).catch(e=>setError(e instanceof Error?e.message:"Health check failed"))}><RefreshCw size={15}/> Refresh</button></div><div className="health-grid">{[{label:"Qdrant Cloud",configured:readiness?.qdrant_configured,connected:readiness?.qdrant_connected},{label:"Supabase PostgreSQL",configured:readiness?.database_configured,connected:readiness?.database_connected},{label:"Google Gemini",configured:readiness?.gemini_configured,connected:readiness?.gemini_configured}].map(x=><div className="health-card" key={x.label}><b>{x.label}</b><span className={`status-badge ${x.connected?"success":x.configured===false?"neutral":"warning"}`}>{x.connected?"Configured / connected":x.configured===false?"Not configured":"Check required"}</span></div>)}</div><div className="health-detail"><div><b>Embedding provider</b><small>{readiness?.embedding_provider||"—"} · {readiness?.embedding_model||"—"} · {readiness?.embedding_dimension??"—"} dimensions</small></div></div><div className="health-detail"><div><b>Generation model</b><small>{readiness?.gemini_model||"—"}</small></div></div></section>:active==="Upload Document"?<section className="panel upload-panel"><div className="section-heading"><div><h3>Upload college document</h3><p>Add an official PDF or Word document to the searchable knowledge base.</p></div></div><label className="drop-zone" htmlFor="document-file"><div className="upload-icon"><FileUp size={26}/></div><b>{file?file.name:"Choose a document to upload"}</b><span>{file?`${size(file.size)} · ${file.type||"Document"}`:"Drag and drop is supported · PDF or DOCX · Maximum 50 MB"}</span><input id="document-file" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e=>setFile(e.target.files?.[0]||null)}/><span className="browse-btn">Browse files</span></label><div className="upload-guidance"><ShieldCheck size={17}/><span>Only approved college material should be uploaded. The backend validates file format, content and duplicate versions before indexing.</span></div><button className="primary-btn upload-submit" disabled={!file||uploading} onClick={doUpload}>{uploading?<><RefreshCw size={16} className="spin"/> Processing document…</>:<><UploadCloud size={17}/> Upload and index document</>}</button></section>
+ :<><div className="page-intro"><div><h3>{active==="Dashboard"?"Knowledge base overview":"Document library"}</h3><p>Monitor source documents used to generate grounded student responses.</p></div><button className="primary-btn" onClick={()=>setActive("Upload Document")}><FileUp size={16}/> Upload document</button></div>
+ <div className="stats-grid"><div className="stat-card"><div className="stat-icon blue"><FileText size={19}/></div><span>Total documents</span><b>{counts.total}</b><small>In knowledge registry</small></div><div className="stat-card"><div className="stat-icon green"><CheckCircle2 size={19}/></div><span>Indexed</span><b>{counts.done}</b><small>Available for retrieval</small></div><div className="stat-card"><div className="stat-icon amber"><Clock3 size={19}/></div><span>In progress</span><b>{counts.processing}</b><small>Queued or processing</small></div><div className="stat-card"><div className="stat-icon red"><AlertCircle size={19}/></div><span>Failed</span><b>{counts.failed}</b><small>Require attention</small></div></div>
+ {active==="Dashboard"&&<div className="overview-grid"><section className="panel"><div className="panel-title"><h3>Ingestion summary</h3><span>Current registry</span></div><div className="summary-bars">{[{name:"Indexed",value:counts.done,color:"bar-green"},{name:"Processing",value:counts.processing,color:"bar-amber"},{name:"Failed",value:counts.failed,color:"bar-red"}].map(x=><div className="bar-row" key={x.name}><div><span>{x.name}</span><b>{x.value}</b></div><div className="bar-track"><i className={x.color} style={{width:`${counts.total?x.value/counts.total*100:0}%`}}/></div></div>)}</div><div className="health-detail"><span className={`status-dot ${health?"online":""}`}/><div><b>{health?"API service reachable":"API service status unavailable"}</b><small>{health?`${health.project_name} · ${health.version}`:"Check backend process and network configuration"}</small></div></div></section><section className="panel"><div className="panel-title"><h3>Recently added</h3><button onClick={()=>setActive("Documents")}>View all</button></div>{docs.slice(0,5).map(d=><div className="recent-row" key={d.id}><div className="pdf-icon"><FileText size={17}/></div><div className="recent-name"><b>{d.original_filename}</b><small>{date(d.created_at)} · v{d.document_version}</small></div><span className={`status-badge ${statusClass(d.status)}`}>{d.status}</span></div>)}{!docs.length&&<p className="empty-state">No documents have been uploaded yet.</p>}</section></div>}
+ <section className="panel documents-panel"><div className="panel-title"><div><h3>{active==="Dashboard"?"Document activity":"All documents"}</h3><p>Document metadata and ingestion lifecycle</p></div><button className="refresh-btn" onClick={()=>load()}><RefreshCw size={15}/> Refresh</button></div><div className="table-tools"><div className="search-box"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search documents…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="completed">Indexed</option><option value="processing">Processing</option><option value="failed">Failed</option><option value="queued">Queued</option></select></div><div className="table-wrap"><table><thead><tr><th>DOCUMENT</th><th>VERSION</th><th>CHUNKS</th><th>STATUS</th><th>UPLOADED</th><th>ACTIONS</th></tr></thead><tbody>{visible.map(d=><tr key={d.id}><td><div className="doc-cell"><div className="pdf-icon"><FileText size={17}/></div><div><b>{d.original_filename}</b><small>{size(d.file_size)} · {d.file_type.toUpperCase()}</small></div></div></td><td>v{d.document_version}{d.is_active&&<span className="active-version">Active</span>}</td><td>{d.chunk_count}</td><td><span className={`status-badge ${statusClass(d.status)}`}>{d.status}</span>{d.error_message&&<small className="table-error">{d.error_message}</small>}</td><td>{date(d.created_at)}</td><td><div className="actions">{d.status==="failed"&&<label className="icon-action" title="Retry ingestion"><RefreshCw size={15}/><input type="file" accept=".pdf,.docx" onChange={e=>{const f=e.target.files?.[0];if(f){setRetryTarget(d);void doRetry(f);}}}/></label>}<button className="icon-action delete" title="Delete document and vectors" onClick={()=>setConfirm(d)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table>{!visible.length&&<div className="empty-state">{loading?"Loading documents…":"No matching documents found."}</div>}</div></section></>}
+ <div className="admin-foot">MIT Academy of Engineering · Administrative knowledge base console · Data shown from backend API</div></div></main>
+ {confirm&&<div className="modal-backdrop"><div className="confirm-modal"><div className="modal-icon"><Trash2 size={21}/></div><h3>Delete document?</h3><p><b>{confirm.original_filename}</b> and its associated indexed vectors will be permanently removed. This action cannot be undone.</p><div className="modal-actions"><button onClick={()=>setConfirm(null)}>Cancel</button><button className="danger-btn" onClick={doDelete}>Delete document</button></div></div></div>}
+ </div>;
+}
+export default App;
